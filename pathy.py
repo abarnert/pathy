@@ -1,5 +1,10 @@
 import collections.abc
 
+# TODO:
+# * What should c[...] return? Currently it's just c[:] or c.values().
+# * Mutation
+# * Should __contains__ do anything special?
+
 # Pather wraps a (usually nested) sequence or mapping, extending
 # the usual interface to allow simpler deep searches, including the
 # equivalent of wildcard matches (a la XPath, KVC, dpath, etc.).
@@ -66,6 +71,12 @@ import collections.abc
 #
 #    >>> Pather(c)[..., "properties"]
 #     [{"hat": True}, {2: 1}]
+#
+# There are things that can be expressed in, e.g., XPath that can't be done
+# with a simple recursive pathing library, like finding all things that
+# have properties. If you need any of those things, you're probably better
+# off using an XPath-like library than trying to bang it into shape with
+# a comprehension over an ellipsis pather lookup.
 
 def _helprecurse(iterable, keypath, flatten):
     results = []
@@ -74,43 +85,73 @@ def _helprecurse(iterable, keypath, flatten):
         try:
             result = FrozenPather(value)[keypath]
             join(result)
-        except LookupError:
+        except (LookupError, TypeError):
             pass
     return results
+
+def _isnonstringsequence(x):
+    return (isinstance(x, collections.abc.Sequence) and not 
+            isinstance(x, (str, collections.abc.ByteString)))
 
 class FrozenPather(collections.abc.Mapping):
     def __init__(self, collection):
         self.collection = collection
+    def __iter__(self):
+        return iter(self.collection)
+    def __len__(self):
+        return len(self.collection)
     def __getitem__(self, keypath):
         if isinstance(keypath, tuple):
             first, *rest = keypath
-            flatten = any(isinstance(part, (slice, ellipsis)) for part in rest)
-            if isinstance(first, slice):
-                if (isinstance(self.collection, collections.abc.Mapping) and
-                    first == slice(None)):
-                    return _helprecurse(self.collection.values(), rest, flatten)
-                else:
-                    return _helprecurse(self.collection, rest, flatten)
-            elif isinstance(first, ellipsis):
-                pass # TODO!
-            elif rest:
-                return FrozenPather(self.collection[first])[rest]
+            rest = tuple(rest)
+        else:
+            first, rest = keypath, ()
+        flatten = any(isinstance(part, (slice, type(Ellipsis)))
+                      for part in rest)
+        if isinstance(first, slice):
+            if (isinstance(self.collection, collections.abc.Mapping) and
+                first == slice(None)):
+                subcollection = self.collection.values()
             else:
+                subcollection = self.collection[first]
+            if not rest:
+                return subcollection
+            else:
+                return _helprecurse(subcollection, rest, flatten)
+        elif first is Ellipsis:
+            if isinstance(self.collection, collections.abc.Mapping):
+                subcollection = self.collection.values()
+            elif _isnonstringsequence(self.collection):
+                subcollection = self.collection
+            else:
+                return self.collection if not rest else []
+            if not rest:
+                return subcollection
+            elif not subcollection:
+                return []
+            else:
+                return (_helprecurse(subcollection, (slice(None), *rest), True) +
+                        _helprecurse(subcollection, rest, True))
+        else:
+            if not rest:
                 return self.collection[first]
+            else:
+                return FrozenPather(self.collection[first])[rest]
                     
-class Pather(FrozenPather, collections.abc.MutableMapping):
+class Pather(FrozenPather):#, collections.abc.MutableMapping):
     pass
 
 def test():
+    from datetime import datetime
     c = {"things": [
          {"id": 0, "name": "cat", "properties": {"hat": True}},
          {"id": 1, "name": "thing1"},
          {"id": 2, "name": "thing2", "properties": {2: 1}},
          ], "timestamp": datetime(2018, 12, 9, 17, 22, 53, 978855)}
     assert Pather(c)["timestamp"] == datetime(2018, 12, 9, 17, 22, 53, 978855)
-    assert Pather(c)["things", 1, "id"] = 1
+    assert Pather(c)["things", 1, "id"] == 1
     assert Pather(c)["things", 1:, "name"] == ["thing1", "thing2"]
     assert Pather(c)["things", :, "properties"] == [{"hat": True}, {2: 1}]
     assert Pather(c)[:, 0, "id"] == [0]
     assert Pather(c)[:, :, "properties"] == [{"hat": True}, {2: 1}]
-    # assert Pather(c)[..., "properties"] == [{"hat": True}, {2: 1}]
+    assert Pather(c)[..., "properties"] == [{"hat": True}, {2: 1}]
