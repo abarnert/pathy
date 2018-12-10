@@ -1,10 +1,5 @@
 import collections.abc
 
-# TODO:
-# * What should c[...] return? Currently it's just c[:] or c.values().
-# * Mutation
-# * Should __contains__ do anything special?
-
 # Pather wraps a (usually nested) sequence or mapping, extending
 # the usual interface to allow simpler deep searches, including the
 # equivalent of wildcard matches (a la XPath, KVC, dpath, etc.).
